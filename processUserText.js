@@ -12,32 +12,21 @@
     - Composite specific date & time - 7th December, 07/11 ,  07/11/2021, 10:00 07/11/2021, 6pm 7th December 
 */
 const CacheSingleton = require('./reminderCache');
-const { reduceTimestampAccuracyToMinutes } = require('./helpers');
-
+const { supportedTimeFormatResolvers, supportedDateFormatsResolvers  } = require('./dateAndTimeFormatResolvers');
+const { reduceTimestampAccuracyToMinutes, getDaysSinceEPOCH, daysToMillisenconds } = require('./helpers');
 
 const REGEX_FORMAT_CAPTURE_MAP = {
-    RELATIVE_TIME_FORMAT: /(([1-9]|[0-9])+ +)(\bmins\b|\bminutes\b|\bhours\b|\bdays\b)/gm
+    RELATIVE_TIME_FORMAT: /(([1-9]|[0-9])+ +)(\bmin\b|\bmins\b|\bminute\b|\bminutes\b|\bhours\b|\bhours\b|\bdays\b|\bdays\b)/gm
 }
-
-const STRING_TO_TIME_MAP = {
-    // unique set of charaters to represent day, hour and minutes for each kye and millisecond counterpart
-    m: 60000,
-    h: 3.6e+6,
-    d: 8.64e+7
-}
-
 
 const processUserText = (userText, chatId) => {
-    /* TODO
-        1. when capturing fits start from Composite date format, to specified time then to Relative time format
-
-    */
-
     let messageBack;
 
     if(validateReminderFormat(userText)) {
         const [date, content] = splitReminderDateAndContent(userText);
+        console.log()
         const reminderTimestamp = transformReminderTimeToTimestamp(date);
+
         const cache = CacheSingleton.getInstance();
         cache.addEntry({
             timestamp: reduceTimestampAccuracyToMinutes(reminderTimestamp),
@@ -46,12 +35,6 @@ const processUserText = (userText, chatId) => {
         });
 
         console.log('cache: ', cache.retrieveAllEntries());
-        console.log('timestamp: ',reminderTimestamp)
-        console.log('date: ', new Date(reminderTimestamp).toString());
-        console.log('timestamp before: ', reminderTimestamp);
-        console.log('reduceTimestampAccuracyToMinutes: ',reduceTimestampAccuracyToMinutes(reminderTimestamp));
-
-        console.log('process ', new Date(reduceTimestampAccuracyToMinutes(reminderTimestamp)).toString())
         messageBack = `reminder set ${new Date(reminderTimestamp).toString()}`;
     } else {
         console.log('format not valid');
@@ -62,41 +45,79 @@ const processUserText = (userText, chatId) => {
 };
 
 const transformReminderTimeToTimestamp = (date) => {
-    const matchNumbersRegex = /([1-9]|[0-9])+/;
-    const matchTimeUnit = /(m|h|d)/;
 
-    let millisecondsOffset = 0;
+    const dateInTimestamp = date.map(date => {
+        const validDateFound = supportedDateFormatsResolvers.find(dateFormat => date.match(dateFormat.matcher));
+        const validTimeFound = supportedTimeFormatResolvers.find(timeFormat =>  date.match(timeFormat.matcher));
+        if (validTimeFound) {
+            return validTimeFound.resolver(date);
+        }
 
-    date.forEach((datePart) => {
-        const matchedTimeUnit = datePart.match(matchTimeUnit);
-        const matchedTimeValue = datePart.match(matchNumbersRegex);
-
-        if(matchedTimeUnit && matchedTimeValue) {
-            millisecondsOffset += STRING_TO_TIME_MAP[matchedTimeUnit[0]] * matchedTimeValue[0];
+        if (validDateFound) {
+            return validDateFound.resolver(date);
         }
     });
 
-    const unixTimestamp = Date.now() + millisecondsOffset;
+    let unixTimestamp = 0;
+
+    if (dateInTimestamp.length > 1) {
+        unixTimestamp = dateInTimestamp.reduce((acc, timestamp) => {
+            acc += timestamp;
+
+            return acc;
+        }, 0);
+    } else {
+        const currentDate = new Date();
+        const daysSinceEpoch = getDaysSinceEPOCH(
+            currentDate.getDate(), 
+            (currentDate.getMonth() + 1), // this month index starts from 0 rather than one
+            currentDate.getFullYear()
+        );
+        unixTimestamp = daysToMillisenconds(daysSinceEpoch) + dateInTimestamp[0];
+    }
+
     return unixTimestamp;
 }
 
 
 const validateReminderFormat = (userText) => {
+    const validTimeFound = supportedTimeFormatResolvers.find(timeFormat =>  userText.match(timeFormat.matcher));
+
     if (userText.match(REGEX_FORMAT_CAPTURE_MAP.RELATIVE_TIME_FORMAT)) {
        return true;
     };
+
+    if (validTimeFound) {
+        return true;
+    }
 
     return false;
 };
 
 const splitReminderDateAndContent = (userText) => {
+    const validDateFound = supportedDateFormatsResolvers.find(dateFormat => userText.match(dateFormat.matcher));
+    const validTimeFound = supportedTimeFormatResolvers.find(timeFormat =>  userText.match(timeFormat.matcher));
+    const date = [];
+    let content = userText;
+
     if (userText.match(REGEX_FORMAT_CAPTURE_MAP.RELATIVE_TIME_FORMAT)) {
-        const relativeTimeArray = userText.match(REGEX_FORMAT_CAPTURE_MAP.RELATIVE_TIME_FORMAT);
-        const content = userText.replace(REGEX_FORMAT_CAPTURE_MAP.RELATIVE_TIME_FORMAT, '');
+        const relativeTimeArray = content.match(REGEX_FORMAT_CAPTURE_MAP.RELATIVE_TIME_FORMAT);
+        content = content.replace(REGEX_FORMAT_CAPTURE_MAP.RELATIVE_TIME_FORMAT, '');
         
         return [relativeTimeArray, content];
     }
+    
+    if (validTimeFound) {
+        date.push(content.match(validTimeFound.matcher)[0]);
+        content = content.replace(validTimeFound.matcher, '');
+    }
+    
+    if (validDateFound) {
+        date.push(content.match(validDateFound.matcher)[0]);
+        content = content.replace(validDateFound.matcher, '');
+    }
 
+    return [date, content];
 };
 
 module.exports = processUserText;

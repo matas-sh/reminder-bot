@@ -7,7 +7,8 @@ dotenv.config();
 
 const admonereBot = new Telegraf(process.env.BOT_TOKEN);
 
-admonereBot.on('text', (ctx) => {
+admonereBot.on('text', async (ctx) => {
+    console.log('context: ', ctx.update.message.from);
     const messageBack = processUserText(ctx.update.message.text, ctx.chat.id);
     admonereBot.telegram.sendMessage(ctx.chat.id, messageBack);
 });
